@@ -11,6 +11,8 @@ Outputs (written under outputs_basic/):
     - outputs_basic/audio_lms.wav      : speech cleaned with LMS
     - outputs_basic/audio_rls.wav      : speech cleaned with RLS
     - outputs_basic/signals.png        : visualization of original vs cleaned
+    - outputs_basic/convergence.png    : LMS vs RLS running-RMS convergence
+    - outputs_basic/convergence.csv    : numeric convergence curves
 """
 
 from __future__ import annotations
@@ -81,8 +83,8 @@ def lms_filter(
 def rls_filter(
     noise: List[float],
     target: List[float],
-    order: int = 8,
-    lam: float = 0.99,
+    order: int = 12,
+    lam: float = 0.95,
     delta: float = 0.1,
 ) -> List[float]:
     """Recursive-least-square adaptive filter returning the error output."""
@@ -123,6 +125,31 @@ def rms(signal: List[float]) -> float:
     return math.sqrt(sum(s * s for s in signal) / len(signal))
 
 
+def running_rms(signal: List[float], window: int) -> List[float]:
+    """Running RMS with a sliding window (inclusive of current sample)."""
+    if window <= 0:
+        raise ValueError("window must be positive")
+    if not signal:
+        return []
+    sq = [s * s for s in signal]
+    cumsum = []
+    total = 0.0
+    for v in sq:
+        total += v
+        cumsum.append(total)
+    out: List[float] = []
+    for i in range(len(signal)):
+        start = i - window + 1
+        if start <= 0:
+            total_window = cumsum[i]
+            count = i + 1
+        else:
+            total_window = cumsum[i] - cumsum[start - 1]
+            count = window
+        out.append(math.sqrt(total_window / count))
+    return out
+
+
 def remove_dc(signal: List[float]) -> List[float]:
     """Remove DC component by subtracting mean."""
     if not signal:
@@ -149,7 +176,7 @@ def plot_signals(rate: int, original, lms_clean, rls_clean) -> None:
         print("matplotlib not installed; skipping plots.")
         return
 
-    segment = min(len(original), rate * 2)  # first 2 seconds
+    segment = min(len(original), rate * 10)  # first 2 seconds
     t = [i / rate for i in range(segment)]
     plt.figure(figsize=(10, 6))
     plt.subplot(3, 1, 1)
@@ -171,6 +198,29 @@ def plot_signals(rate: int, original, lms_clean, rls_clean) -> None:
     plt.savefig("outputs_basic/signals.png", dpi=150)
     plt.close()
     print("Saved plot to outputs_basic/signals.png")
+
+
+def plot_convergence(rate: int, lms_curve, rls_curve) -> None:
+    try:
+        import matplotlib.pyplot as plt  # type: ignore
+    except ImportError:
+        print("matplotlib not installed; skipping convergence plot.")
+        return
+
+    length = min(len(lms_curve), len(rls_curve))
+    t = [i / rate for i in range(length)]
+    plt.figure(figsize=(8, 4))
+    plt.semilogy(t, lms_curve[:length], label="LMS", linewidth=0.9)
+    plt.semilogy(t, rls_curve[:length], label="RLS", linewidth=0.9)
+    plt.xlabel("Time [s]")
+    plt.ylabel("Running RMS (linear, log scale)")
+    plt.title("Convergence comparison")
+    plt.legend()
+    plt.grid(True, which="both", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig("outputs_basic/convergence.png", dpi=150)
+    plt.close()
+    print("Saved plot to outputs_basic/convergence.png")
 
 
 def run_once(
@@ -218,14 +268,20 @@ def main() -> None:
     parser.add_argument("--noise", default="aud/audio_noise.wav", help="Path to noise ref")
     parser.add_argument("--lms-order", type=int, default=12)
     parser.add_argument("--lms-mu", type=float, default=0.0025)
-    parser.add_argument("--rls-order", type=int, default=8)
-    parser.add_argument("--rls-lam", type=float, default=0.995)
-    parser.add_argument("--rls-delta", type=float, default=0.01)
+    parser.add_argument("--rls-order", type=int, default=10)
+    parser.add_argument("--rls-lam", type=float, default=0.999)
+    parser.add_argument("--rls-delta", type=float, default=0.1)
     parser.add_argument("--skip-plot", action="store_true", help="Disable plot output")
     parser.add_argument(
         "--grid",
         action="store_true",
         help="Run a small parameter grid and report best RMS",
+    )
+    parser.add_argument(
+        "--conv-window-ms",
+        type=float,
+        default=50.0,
+        help="Running RMS window (ms) for convergence curves",
     )
     args = parser.parse_args()
 
@@ -291,8 +347,22 @@ def main() -> None:
     write_wav(out_dir / "audio_lms.wav", rate_noisy, lms_clean)
     write_wav(out_dir / "audio_rls.wav", rate_noisy, rls_clean)
 
+    # Convergence curves (running RMS).
+    window = max(1, int(rate_noisy * (args.conv_window_ms / 1000.0)))
+    lms_curve = running_rms(lms_clean, window)
+    rls_curve = running_rms(rls_clean, window)
+    length = min(len(lms_curve), len(rls_curve))
+    times = [i / rate_noisy for i in range(length)]
+    conv_csv = out_dir / "convergence.csv"
+    with conv_csv.open("w", encoding="utf-8") as f:
+        f.write("time_sec,lms_running_rms,rls_running_rms\n")
+        for t, a, b in zip(times, lms_curve[:length], rls_curve[:length]):
+            f.write(f"{t},{a},{b}\n")
+    print(f"Saved convergence data to {conv_csv}")
+
     if not args.skip_plot:
         plot_signals(rate_noisy, noisy, lms_clean, rls_clean)
+        plot_convergence(rate_noisy, lms_curve, rls_curve)
 
     print(f"Input RMS: {rms(noisy):.4f}")
     print(

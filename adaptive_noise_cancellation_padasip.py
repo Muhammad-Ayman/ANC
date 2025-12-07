@@ -12,6 +12,8 @@ Outputs (under outputs_padasip/):
     outputs_padasip/audio_lms_pada.wav   (if LMS or both)
     outputs_padasip/audio_rls_pada.wav   (if RLS or both)
     outputs_padasip/signals_pada.png     (if matplotlib available and not --skip-plot)
+    outputs_padasip/convergence_pada.png : LMS vs RLS running-RMS convergence
+    outputs_padasip/convergence_pada.csv : numeric convergence curves
 """
 
 from __future__ import annotations
@@ -107,6 +109,26 @@ def rms(x: np.ndarray) -> float:
     return math.sqrt(float(np.mean(x * x)))
 
 
+def running_rms_np(signal: np.ndarray, window: int) -> np.ndarray:
+    if window <= 0:
+        raise ValueError("window must be positive")
+    if signal.size == 0:
+        return np.array([], dtype=float)
+    sq = signal * signal
+    cumsum = np.cumsum(sq)
+    out = np.empty_like(signal)
+    for i in range(len(signal)):
+        start = i - window + 1
+        if start <= 0:
+            total = cumsum[i]
+            count = i + 1
+        else:
+            total = cumsum[i] - cumsum[start - 1]
+            count = window
+        out[i] = math.sqrt(total / count)
+    return out
+
+
 def plot_signals(rate: int, original, lms_clean=None, rls_clean=None) -> None:
     try:
         import matplotlib.pyplot as plt  # type: ignore
@@ -159,6 +181,12 @@ def main() -> None:
     parser.add_argument("--rls-lam", type=float, default=0.995)
     parser.add_argument("--rls-delta", type=float, default=0.01)
     parser.add_argument("--skip-plot", action="store_true")
+    parser.add_argument(
+        "--conv-window-ms",
+        type=float,
+        default=50.0,
+        help="Running RMS window (ms) for convergence curves",
+    )
     args = parser.parse_args()
 
     base = Path(".")
@@ -193,6 +221,39 @@ def main() -> None:
             f"RLS done: order={args.rls_order} lam={args.rls_lam} delta={args.rls_delta}, "
             f"RMS={rms(rls_out):.4f}"
         )
+
+    # Convergence curves if both are available.
+    if lms_out is not None and rls_out is not None:
+        window = max(1, int(rate_noisy * (args.conv_window_ms / 1000.0)))
+        lms_curve = running_rms_np(lms_out, window)
+        rls_curve = running_rms_np(rls_out, window)
+        length = min(len(lms_curve), len(rls_curve))
+        t = np.arange(length) / rate_noisy
+        conv_csv = out_dir / "convergence_pada.csv"
+        with conv_csv.open("w", encoding="utf-8") as f:
+            f.write("time_sec,lms_running_rms,rls_running_rms\n")
+            for ti, a, b in zip(t, lms_curve[:length], rls_curve[:length]):
+                f.write(f"{ti},{a},{b}\n")
+        print(f"Saved convergence data to {conv_csv}")
+
+        if not args.skip_plot:
+            try:
+                import matplotlib.pyplot as plt  # type: ignore
+            except ImportError:
+                print("matplotlib not installed; skipping convergence plot.")
+            else:
+                plt.figure(figsize=(8, 4))
+                plt.semilogy(t, lms_curve[:length], label="LMS", linewidth=0.9)
+                plt.semilogy(t, rls_curve[:length], label="RLS", linewidth=0.9)
+                plt.xlabel("Time [s]")
+                plt.ylabel("Running RMS (linear, log scale)")
+                plt.title("Convergence comparison (padasip)")
+                plt.legend()
+                plt.grid(True, which="both", linestyle="--", alpha=0.5)
+                plt.tight_layout()
+                plt.savefig(out_dir / "convergence_pada.png", dpi=150)
+                plt.close()
+                print(f"Saved convergence plot to {out_dir / 'convergence_pada.png'}")
 
     if not args.skip_plot:
         plot_signals(rate_noisy, noisy, lms_out, rls_out)

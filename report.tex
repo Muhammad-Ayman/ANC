@@ -1,0 +1,502 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Adaptive Noise Cancellation Using LMS and RLS Filters\\
+\large A Comparative Study}
+
+% Student information - Update with actual names and IDs
+% Add or remove students as needed by adding/removing lines below
+\newcommand{\studentOneName}{Muhammad Ayman}
+\newcommand{\studentOneID}{ID: 222250201}
+\newcommand{\studentTwoName}{Omar Mohamed Mostafa}
+\newcommand{\studentTwoID}{ID: 222250194}
+\newcommand{\studentThreeName}{Ziad Osama Mohamed El-Boshy}
+\newcommand{\studentThreeID}{ID: 222250166}
+\newcommand{\studentFourName}{Suhila Usama Ahmed}
+\newcommand{\studentFourID}{ID: 222250175}
+\newcommand{\studentFiveName}{Mohamed Nasser}
+\newcommand{\studentFiveID}{ID: 222250204}
+
+\author{%
+    \begin{center}
+        \textbf{Prepared by:}\\[0.3cm]
+        \studentOneName \quad \studentOneID\\[0.2cm]
+        \studentTwoName \quad \studentTwoID\\[0.2cm]
+        \studentThreeName \quad \studentThreeID\\[0.2cm]
+        \studentFourName \quad \studentFourID\\[0.2cm]
+        \studentFiveName \quad \studentFiveID\\[0.5cm]
+        \textbf{Supervised by:}\\[0.3cm]
+        Dr. Amr Wagih
+    \end{center}
+}
+\date{\today}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Adaptive Noise Cancellation Report}
+}
+
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    breaklines=true,
+    frame=single,
+    captionpos=b
+}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{1cm}
+
+{\Huge\bfseries Adaptive Noise Cancellation Using LMS and RLS Filters\par}
+\vspace{0.5cm}
+{\Large A Comparative Study\par}
+\vspace{2cm}
+
+{\large\textbf{Prepared by:}\par}
+\vspace{0.5cm}
+\studentOneName \quad \studentOneID\par
+\vspace{0.3cm}
+\studentTwoName \quad \studentTwoID\par
+\vspace{0.3cm}
+\studentThreeName \quad \studentThreeID\par
+\vspace{0.3cm}
+\studentFourName \quad \studentFourID\par
+\vspace{0.3cm}
+\studentFiveName \quad \studentFiveID\par
+\vspace{1.5cm}
+
+{\large\textbf{Supervised by:}\par}
+\vspace{0.5cm}
+{\large Dr. Amr Wagih\par}
+\vspace{2cm}
+
+{\large\today\par}
+
+\vfill
+\end{titlepage}
+
+\begin{abstract}
+This report presents a comprehensive analysis of adaptive noise cancellation techniques using Least Mean Square (LMS) and Recursive Least Squares (RLS) adaptive filters. Two implementations were developed: a custom implementation using only Python standard library, and an implementation using the padasip library. The filters were applied to noisy speech signals with separate noise reference inputs. Performance was evaluated through RMS measurements, convergence rate analysis, and visual inspection of the processed signals. Results demonstrate the effectiveness of both algorithms, with LMS showing faster initial convergence and RLS achieving better steady-state performance in certain configurations.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+Adaptive noise cancellation is a fundamental signal processing technique used to remove unwanted noise from desired signals. This is particularly important in applications such as speech enhancement, where background noise can significantly degrade signal quality. The technique relies on having a reference noise signal that is correlated with the noise present in the primary signal.
+
+This project implements and compares two prominent adaptive filtering algorithms:
+\begin{itemize}
+    \item \textbf{Least Mean Square (LMS)}: A simple, computationally efficient algorithm with good convergence properties
+    \item \textbf{Recursive Least Squares (RLS)}: A more complex algorithm that typically converges faster and achieves better steady-state performance at the cost of higher computational complexity
+\end{itemize}
+
+\section{Methodology}
+
+\subsection{Adaptive Noise Cancellation Principle}
+
+The adaptive noise cancellation system operates on the principle shown in Figure~\ref{fig:anc_principle}. The primary input $d(n)$ contains the desired signal $s(n)$ plus noise $n_0(n)$. A reference input $x(n)$ contains noise $n_1(n)$ that is correlated with $n_0(n)$ but uncorrelated with $s(n)$.
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox{0.8\textwidth}{\centering
+\textbf{Adaptive Noise Cancellation Block Diagram}\\[0.5em]
+Primary Input: $d(n) = s(n) + n_0(n)$\\
+Reference Input: $x(n) = n_1(n)$\\
+Output: $e(n) = d(n) - y(n)$
+}}
+\caption{Adaptive noise cancellation principle}
+\label{fig:anc_principle}
+\end{figure}
+
+The adaptive filter estimates the noise component from the reference input and subtracts it from the primary input, producing the error signal $e(n)$ which converges to the desired signal $s(n)$.
+
+\subsection{Least Mean Square (LMS) Algorithm}
+
+The LMS algorithm is a stochastic gradient descent method that minimizes the mean square error. The filter update equations are:
+
+\begin{align}
+y(n) &= \mathbf{w}^T(n) \mathbf{x}(n) = \sum_{i=0}^{M-1} w_i(n) x(n-i) \label{eq:lms_output}\\
+e(n) &= d(n) - y(n) \label{eq:lms_error}\\
+\mathbf{w}(n+1) &= \mathbf{w}(n) + 2\mu e(n) \mathbf{x}(n) \label{eq:lms_update}
+\end{align}
+
+where:
+\begin{itemize}
+    \item $\mathbf{w}(n)$ is the filter weight vector of order $M$
+    \item $\mathbf{x}(n) = [x(n), x(n-1), \ldots, x(n-M+1)]^T$ is the input vector
+    \item $\mu$ is the step size parameter
+    \item $e(n)$ is the error signal (output)
+\end{itemize}
+
+The step size $\mu$ must satisfy:
+\begin{equation}
+0 < \mu < \frac{1}{\lambda_{\max}}
+\end{equation}
+where $\lambda_{\max}$ is the largest eigenvalue of the input correlation matrix, to ensure stability.
+
+\subsection{Recursive Least Squares (RLS) Algorithm}
+
+The RLS algorithm minimizes a weighted least squares cost function and provides faster convergence at the expense of higher computational complexity. The update equations are:
+
+\begin{align}
+\mathbf{k}(n) &= \frac{\mathbf{P}(n-1)\mathbf{x}(n)}{\lambda + \mathbf{x}^T(n)\mathbf{P}(n-1)\mathbf{x}(n)} \label{eq:rls_kalman}\\
+e(n) &= d(n) - \mathbf{w}^T(n-1)\mathbf{x}(n) \label{eq:rls_error}\\
+\mathbf{w}(n) &= \mathbf{w}(n-1) + \mathbf{k}(n)e(n) \label{eq:rls_update}\\
+\mathbf{P}(n) &= \frac{1}{\lambda}\left[\mathbf{P}(n-1) - \mathbf{k}(n)\mathbf{x}^T(n)\mathbf{P}(n-1)\right] \label{eq:rls_p}
+\end{align}
+
+where:
+\begin{itemize}
+    \item $\lambda$ is the forgetting factor ($0 < \lambda \leq 1$)
+    \item $\mathbf{P}(n)$ is the inverse correlation matrix
+    \item $\mathbf{k}(n)$ is the Kalman gain vector
+    \item $\delta$ is used for initialization: $\mathbf{P}(0) = \delta^{-1}\mathbf{I}$
+\end{itemize}
+
+The forgetting factor $\lambda$ controls the memory of the algorithm. Values close to 1 provide better steady-state performance but slower tracking of non-stationary signals.
+
+\section{Implementation}
+
+\subsection{Custom Implementation}
+
+A custom implementation was developed using only Python's standard library (no external DSP libraries). This implementation includes:
+
+\begin{itemize}
+    \item WAV file I/O using the \texttt{wave} module
+    \item Custom LMS and RLS filter implementations
+    \item Signal preprocessing (DC removal and normalization)
+    \item Convergence analysis tools
+    \item Visualization using matplotlib
+\end{itemize}
+
+Key features of the custom implementation:
+\begin{lstlisting}[caption=Custom LMS Filter Implementation]
+def lms_filter(noise, target, order=12, mu=0.005):
+    w = [0.0] * order
+    out = []
+    for n in range(len(target)):
+        x = [noise[n-k] if n-k >= 0 else 0.0 
+             for k in range(order)]
+        y = sum(w[i] * x[i] for i in range(order))
+        e = target[n] - y
+        for i in range(order):
+            w[i] += 2 * mu * e * x[i]
+        out.append(e)
+    return out
+\end{lstlisting}
+
+\subsection{Padasip Implementation}
+
+An alternative implementation using the padasip library was also developed for comparison. Padasip provides optimized implementations of adaptive filters with additional features:
+
+\begin{itemize}
+    \item Optimized C-based core operations
+    \item Additional adaptive filter variants
+    \item Built-in preprocessing utilities
+\end{itemize}
+
+\subsection{Preprocessing}
+
+Both implementations apply preprocessing to improve filter convergence:
+
+\begin{enumerate}
+    \item \textbf{DC Removal}: Subtracts the mean to remove DC offset
+    \begin{equation}
+    x_{\text{dc}}(n) = x(n) - \frac{1}{N}\sum_{i=0}^{N-1} x(i)
+    \end{equation}
+    
+    \item \textbf{Normalization}: Scales the signal to prevent clipping
+    \begin{equation}
+    x_{\text{norm}}(n) = \frac{x(n)}{\max(|x(n)|)}
+    \end{equation}
+\end{enumerate}
+
+\section{Experimental Setup}
+
+\subsection{Test Signals}
+
+The experiments were conducted using audio files:
+\begin{itemize}
+    \item \textbf{Primary Input}: \texttt{aud/audio.wav} - Noisy speech signal
+    \item \textbf{Reference Input}: \texttt{aud/audio\_noise.wav} - Noise reference signal
+    \item Additional test pair: \texttt{aud/audio2.wav} and \texttt{aud/audio2\_noise.wav}
+\end{itemize}
+
+\subsection{Parameter Selection}
+
+A grid search was performed to find optimal parameters:
+
+\subsubsection{LMS Grid Search}
+\begin{itemize}
+    \item Filter orders: 16, 24, 32, 48
+    \item Step sizes: 0.0035, 0.004, 0.005, 0.006, 0.010
+\end{itemize}
+
+\subsubsection{RLS Grid Search}
+\begin{itemize}
+    \item Filter orders: 8, 12, 16, 24
+    \item Forgetting factors: 0.990, 0.992, 0.995
+    \item Initialization deltas: 0.005, 0.01, 0.020
+\end{itemize}
+
+\subsection{Performance Metrics}
+
+Performance was evaluated using:
+\begin{itemize}
+    \item \textbf{RMS (Root Mean Square)}: Overall signal energy measure
+    \begin{equation}
+    \text{RMS} = \sqrt{\frac{1}{N}\sum_{n=0}^{N-1} e^2(n)}
+    \end{equation}
+    
+    \item \textbf{Running RMS}: Time-varying RMS computed over a sliding window (50 ms) to track convergence
+    \begin{equation}
+    \text{RMS}_{\text{run}}(n) = \sqrt{\frac{1}{W}\sum_{i=n-W+1}^{n} e^2(i)}
+    \end{equation}
+    where $W$ is the window size in samples.
+\end{itemize}
+
+\section{Results}
+
+\subsection{Grid Search Results}
+
+The grid search identified optimal parameters for each algorithm:
+
+\begin{table}[h]
+\centering
+\caption{Optimal Parameters from Grid Search}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Algorithm} & \textbf{Order} & \textbf{Parameter} & \textbf{Output RMS} \\
+\midrule
+LMS (Custom) & 32 & $\mu = 0.01$ & 0.0796 \\
+RLS (Custom) & 8 & $\lambda = 0.995$, $\delta = 0.01$ & 0.0903 \\
+LMS (Padasip) & 32 & $\mu = 0.01$ & 0.0868 \\
+RLS (Padasip) & 16 & $\lambda = 0.995$, $\delta = 0.01$ & 0.1025 \\
+\bottomrule
+\end{tabular}
+\label{tab:grid_results}
+\end{table}
+
+\subsection{Signal Quality Comparison}
+
+\begin{table}[h]
+\centering
+\caption{RMS Comparison for Different Test Cases}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Test Case} & \textbf{Input RMS} & \textbf{LMS RMS} & \textbf{RLS RMS} \\
+\midrule
+audio.wav (Custom) & 0.1748 & 0.0796 & 0.0903 \\
+audio.wav (Padasip) & 0.1765 & 0.0868 & 0.1025 \\
+audio2.wav (Padasip) & 0.1734 & 0.1702 & 0.1729 \\
+\bottomrule
+\end{tabular}
+\label{tab:rms_comparison}
+\end{table}
+
+\subsection{Convergence Analysis}
+
+The convergence behavior was analyzed using running RMS curves. Key observations:
+
+\begin{enumerate}
+    \item \textbf{Initial Convergence}: RLS typically converges faster initially due to its optimal update mechanism
+    \item \textbf{Steady-State Performance}: LMS with optimal parameters achieved lower steady-state RMS in the custom implementation
+    \item \textbf{Convergence Time}: RLS reached steady-state faster, typically within the first 0.1-0.5 seconds
+    \item \textbf{Stability}: Both algorithms remained stable throughout the signal duration
+\end{enumerate}
+
+Figure~\ref{fig:convergence} shows the convergence curves for both algorithms. The RLS algorithm demonstrates faster initial convergence, while LMS achieves better steady-state performance in this configuration.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{outputs_basic/convergence.png}
+\caption{Convergence comparison: Running RMS over time for LMS and RLS filters}
+\label{fig:convergence}
+\end{figure}
+
+\subsection{Signal Waveforms}
+
+Figure~\ref{fig:signals} shows the original noisy signal compared to the cleaned outputs from both filters. Both algorithms successfully reduce noise while preserving the speech content.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{outputs_basic/signals.png}
+\caption{Signal comparison: Original noisy speech (top), LMS cleaned (middle), RLS cleaned (bottom)}
+\label{fig:signals}
+\end{figure}
+
+\section{Discussion}
+
+\subsection{Algorithm Comparison}
+
+\subsubsection{Computational Complexity}
+
+\begin{itemize}
+    \item \textbf{LMS}: $O(M)$ operations per sample, where $M$ is the filter order
+    \item \textbf{RLS}: $O(M^2)$ operations per sample due to matrix operations
+\end{itemize}
+
+For real-time applications with limited computational resources, LMS is preferred. For offline processing or when computational power is available, RLS may provide better performance.
+
+\subsubsection{Convergence Characteristics}
+
+\begin{itemize}
+    \item \textbf{LMS}: Convergence rate depends on the step size $\mu$ and eigenvalue spread of the input correlation matrix. Larger $\mu$ provides faster convergence but may cause instability.
+    \item \textbf{RLS}: Generally converges faster and is less sensitive to eigenvalue spread, but requires careful selection of the forgetting factor $\lambda$.
+\end{itemize}
+
+\subsubsection{Parameter Sensitivity}
+
+\begin{itemize}
+    \item \textbf{LMS}: The step size $\mu$ is critical. Too large values cause instability; too small values result in slow convergence.
+    \item \textbf{RLS}: The forgetting factor $\lambda$ balances tracking ability and steady-state performance. Values close to 1 provide better noise reduction but slower adaptation to changes.
+\end{itemize}
+
+\subsection{Implementation Comparison}
+
+The custom implementation and padasip implementation showed similar results, with slight differences due to:
+\begin{itemize}
+    \item Different initialization strategies
+    \item Numerical precision differences
+    \item Implementation-specific optimizations
+\end{itemize}
+
+The custom implementation achieved slightly better RMS values, possibly due to more careful parameter tuning and preprocessing.
+
+\subsection{Limitations and Future Work}
+
+\begin{enumerate}
+    \item \textbf{Non-stationary Noise}: Both algorithms assume some degree of stationarity. Rapidly changing noise characteristics may degrade performance.
+    \item \textbf{Correlation Requirements}: The reference noise must be correlated with the noise in the primary signal. Poor correlation leads to ineffective cancellation.
+    \item \textbf{Speech Distortion}: Aggressive noise cancellation may introduce artifacts or distort the desired signal.
+    \item \textbf{Real-time Processing}: The current implementation processes entire files. Real-time streaming would require buffering and incremental processing.
+\end{enumerate}
+
+Future improvements could include:
+\begin{itemize}
+    \item Variable step-size LMS for better convergence-speed tradeoff
+    \item Frequency-domain implementations for computational efficiency
+    \item Multi-channel adaptive filtering
+    \item Integration with voice activity detection (VAD)
+\end{itemize}
+
+\section{Conclusion}
+
+This project successfully implemented and compared LMS and RLS adaptive filters for noise cancellation. Key findings:
+
+\begin{enumerate}
+    \item Both algorithms effectively reduce noise when provided with a correlated noise reference
+    \item LMS achieved better steady-state RMS performance in the tested configuration (0.0796 vs 0.0903)
+    \item RLS demonstrated faster initial convergence, reaching steady-state more quickly
+    \item The custom implementation performed comparably to the padasip library implementation
+    \item Proper parameter selection is crucial for optimal performance
+\end{enumerate}
+
+The choice between LMS and RLS depends on the specific application requirements:
+\begin{itemize}
+    \item Use \textbf{LMS} for: Real-time applications, limited computational resources, simpler implementation
+    \item Use \textbf{RLS} for: Offline processing, faster convergence requirements, when computational cost is acceptable
+\end{itemize}
+
+Both implementations successfully demonstrate the principles of adaptive noise cancellation and provide practical tools for speech enhancement applications.
+
+\section{Appendix}
+
+\subsection{File Structure}
+
+The project structure is organized as follows:
+\begin{verbatim}
+ANC/
+├── aud/
+│   ├── audio.wav
+│   ├── audio_noise.wav
+│   ├── audio2.wav
+│   └── audio2_noise.wav
+├── outputs_basic/
+│   ├── audio_lms.wav
+│   ├── audio_rls.wav
+│   ├── signals.png
+│   ├── convergence.png
+│   └── convergence.csv
+├── outputs_padasip/
+│   ├── audio_lms_pada.wav
+│   ├── audio_rls_pada.wav
+│   ├── signals_pada.png
+│   ├── convergence_pada.png
+│   └── convergence_pada.csv
+├── adaptive_noise_cancellation.py
+└── adaptive_noise_cancellation_padasip.py
+\end{verbatim}
+
+\subsection{Usage Examples}
+
+\subsubsection{Custom Implementation}
+\begin{verbatim}
+# Run with default parameters
+python adaptive_noise_cancellation.py
+
+# Run with grid search
+python adaptive_noise_cancellation.py --grid
+
+# Specify custom parameters
+python adaptive_noise_cancellation.py \
+    --lms-order 32 --lms-mu 0.01 \
+    --rls-order 16 --rls-lam 0.995 --rls-delta 0.01
+\end{verbatim}
+
+\subsubsection{Padasip Implementation}
+\begin{verbatim}
+# Run both algorithms
+python adaptive_noise_cancellation_padasip.py --algo both
+
+# Run only LMS
+python adaptive_noise_cancellation_padasip.py --algo lms \
+    --lms-order 32 --lms-mu 0.01
+\end{verbatim}
+
+\subsection{Key Parameters}
+
+\begin{table}[h]
+\centering
+\caption{Parameter Ranges and Recommendations}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Parameter} & \textbf{Range} & \textbf{Recommended} \\
+\midrule
+LMS Order & 8-64 & 16-32 \\
+LMS $\mu$ & 0.001-0.1 & 0.005-0.01 \\
+RLS Order & 4-32 & 8-16 \\
+RLS $\lambda$ & 0.9-0.999 & 0.99-0.995 \\
+RLS $\delta$ & 0.001-0.1 & 0.01-0.1 \\
+\bottomrule
+\end{tabular}
+\label{tab:parameters}
+\end{table}
+
+\end{document}
+

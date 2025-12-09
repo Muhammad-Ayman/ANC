@@ -127,13 +127,6 @@ To compile the report:
 pdflatex report.tex
 ```
 
-## Authors
-
-- Muhammad Ayman (ID: 222250201)
-- Omar Mohamed Mostafa (ID: 222250194)
-- Ziad Osama Mohamed El-Boshy (ID: 222250166)
-- Suhila Usama Ahmed (ID: 222250175)
-- Mohamed Nasser (ID: 222250204)
 
 ## Supervisor
 

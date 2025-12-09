@@ -153,11 +153,36 @@ where:
     \item $e(n)$ is the error signal (output)
 \end{itemize}
 
+\subsubsection{Convergence and Stability}
+
 The step size $\mu$ must satisfy:
 \begin{equation}
 0 < \mu < \frac{1}{\lambda_{\max}}
 \end{equation}
-where $\lambda_{\max}$ is the largest eigenvalue of the input correlation matrix, to ensure stability.
+where $\lambda_{\max}$ is the largest eigenvalue of the input correlation matrix $\mathbf{R} = E[\mathbf{x}(n)\mathbf{x}^T(n)]$, to ensure stability.
+
+The convergence rate of LMS depends on the eigenvalue spread $\chi = \lambda_{\max}/\lambda_{\min}$:
+\begin{itemize}
+    \item \textbf{Small eigenvalue spread} ($\chi \approx 1$): Fast, uniform convergence
+    \item \textbf{Large eigenvalue spread} ($\chi \gg 1$): Slow convergence, especially for modes corresponding to small eigenvalues
+\end{itemize}
+
+The misadjustment (excess mean square error) is approximately:
+\begin{equation}
+M \approx \mu \cdot \text{tr}(\mathbf{R})
+\end{equation}
+where $\text{tr}(\mathbf{R})$ is the trace of the correlation matrix. This represents the trade-off between convergence speed and steady-state error.
+
+\subsubsection{Computational Complexity}
+
+The LMS algorithm requires:
+\begin{itemize}
+    \item \textbf{Per sample}: $2M$ multiplications and $2M$ additions
+    \item \textbf{Total complexity}: $O(M)$ per sample, $O(N \cdot M)$ for $N$ samples
+    \item \textbf{Memory}: $O(M)$ for weight vector and input buffer
+\end{itemize}
+
+This makes LMS highly efficient for real-time applications.
 
 \subsection{Recursive Least Squares (RLS) Algorithm}
 
@@ -178,7 +203,44 @@ where:
     \item $\delta$ is used for initialization: $\mathbf{P}(0) = \delta^{-1}\mathbf{I}$
 \end{itemize}
 
+\subsubsection{Convergence and Stability}
+
 The forgetting factor $\lambda$ controls the memory of the algorithm. Values close to 1 provide better steady-state performance but slower tracking of non-stationary signals.
+
+The RLS algorithm has several important properties:
+\begin{itemize}
+    \item \textbf{Convergence rate}: Independent of eigenvalue spread, typically 2-3 times faster than LMS
+    \item \textbf{Steady-state error}: Lower than LMS for the same filter order
+    \item \textbf{Tracking ability}: Controlled by $\lambda$; smaller values track changes faster
+\end{itemize}
+
+The effective memory of the RLS filter is approximately:
+\begin{equation}
+\tau_{\text{eff}} \approx \frac{1}{1-\lambda}
+\end{equation}
+For $\lambda = 0.995$, the effective memory is about 200 samples.
+
+\subsubsection{Computational Complexity}
+
+The RLS algorithm requires:
+\begin{itemize}
+    \item \textbf{Per sample}: $O(M^2)$ operations due to matrix operations
+    \item \textbf{Total complexity}: $O(N \cdot M^2)$ for $N$ samples
+    \item \textbf{Memory}: $O(M^2)$ for the inverse correlation matrix $\mathbf{P}(n)$
+\end{itemize}
+
+The computational cost is significantly higher than LMS, making it less suitable for real-time applications with limited computational resources. However, the faster convergence often justifies the cost for offline processing.
+
+\subsubsection{Numerical Stability}
+
+The RLS algorithm can suffer from numerical instability, particularly when:
+\begin{itemize}
+    \item The input signal has low energy (small $\mathbf{x}^T(n)\mathbf{P}(n-1)\mathbf{x}(n)$)
+    \item The forgetting factor $\lambda$ is very close to 1
+    \item The initialization parameter $\delta$ is too small
+\end{itemize}
+
+The initialization $\mathbf{P}(0) = \delta^{-1}\mathbf{I}$ helps ensure numerical stability. Typical values of $\delta$ range from 0.01 to 0.1.
 
 \section{Implementation}
 
@@ -194,35 +256,230 @@ A custom implementation was developed using only Python's standard library (no e
     \item Visualization using matplotlib
 \end{itemize}
 
-Key features of the custom implementation:
+\subsubsection{Audio File I/O}
+
+The implementation handles 16-bit PCM WAV files, supporting both mono and stereo inputs. Stereo files are automatically converted to mono by averaging the channels:
+
+\begin{lstlisting}[caption=WAV File Reading Implementation]
+def read_wav(path: Path) -> Tuple[int, List[float]]:
+    """Return sample_rate and mono float samples in [-1, 1]."""
+    with wave.open(str(path), "rb") as wf:
+        channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        rate = wf.getframerate()
+        frames = wf.getnframes()
+        raw = wf.readframes(frames)
+
+    # Only 16-bit PCM supported
+    if sampwidth != 2:
+        raise ValueError(f"Only 16-bit PCM supported, "
+                        f"got {sampwidth * 8} bits")
+
+    # Unpack 16-bit signed integers (little-endian)
+    samples = struct.unpack("<" + "h" * (len(raw) // 2), raw)
+    
+    # Convert stereo to mono by averaging
+    if channels == 2:
+        mono = [(samples[i] + samples[i + 1]) / 2 
+                for i in range(0, len(samples), 2)]
+    else:
+        mono = list(samples)
+
+    # Normalize to [-1, 1] range
+    norm = 32768.0  # 2^15 for 16-bit signed integers
+    return rate, [s / norm for s in mono]
+\end{lstlisting}
+
+The write function ensures no clipping occurs by scaling the signal if necessary:
+
+\begin{lstlisting}[caption=WAV File Writing with Clipping Prevention]
+def write_wav(path: Path, rate: int, samples: List[float]) -> None:
+    """Write mono 16-bit PCM wav from normalized floats."""
+    # Avoid clipping by scaling if peak > 1.0
+    peak = max(max((abs(s) for s in samples), default=0.0), 1e-12)
+    if peak > 1.0:
+        scale = 1.0 / peak
+        samples = [s * scale for s in samples]
+    
+    # Convert to 16-bit integers
+    int_samples = [int(max(-1.0, min(1.0, s)) * 32767) 
+                   for s in samples]
+    raw = struct.pack("<" + "h" * len(int_samples), *int_samples)
+    
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(raw)
+\end{lstlisting}
+
+\subsubsection{LMS Filter Implementation}
+
+The LMS filter implementation follows the standard algorithm with weight vector initialization to zero:
+
 \begin{lstlisting}[caption=Custom LMS Filter Implementation]
-def lms_filter(noise, target, order=12, mu=0.005):
+def lms_filter(noise: List[float], target: List[float], 
+               order: int = 12, mu: float = 0.005) -> List[float]:
+    """Least-mean-square adaptive filter returning the error."""
+    # Initialize weight vector to zeros
     w = [0.0] * order
-    out = []
+    out: List[float] = []
+    
     for n in range(len(target)):
-        x = [noise[n-k] if n-k >= 0 else 0.0 
+        # Create input vector with past samples (zero-padded at start)
+        x = [noise[n - k] if n - k >= 0 else 0.0 
              for k in range(order)]
+        
+        # Filter output: y(n) = w^T(n) * x(n)
         y = sum(w[i] * x[i] for i in range(order))
+        
+        # Error signal: e(n) = d(n) - y(n)
         e = target[n] - y
+        
+        # Weight update: w(n+1) = w(n) + 2*mu*e(n)*x(n)
         for i in range(order):
             w[i] += 2 * mu * e * x[i]
+        
+        out.append(e)  # Error is the cleaned output
+    return out
+\end{lstlisting}
+
+Key implementation details:
+\begin{itemize}
+    \item \textbf{Zero-padding}: For $n < M$ (where $M$ is the filter order), past samples are set to zero, ensuring the filter operates correctly at the signal start
+    \item \textbf{In-place weight update}: The weight vector is updated immediately after computing the error, using the current input vector
+    \item \textbf{Error as output}: The error signal $e(n)$ represents the cleaned signal after noise cancellation
+\end{itemize}
+
+\subsubsection{RLS Filter Implementation}
+
+The RLS implementation includes the inverse correlation matrix update, which is computationally more complex:
+
+\begin{lstlisting}[caption=Custom RLS Filter Implementation]
+def rls_filter(noise: List[float], target: List[float],
+               order: int = 12, lam: float = 0.95, 
+               delta: float = 0.1) -> List[float]:
+    """Recursive-least-square adaptive filter."""
+    # Initialize weight vector
+    w = [0.0] * order
+    
+    # Initialize inverse correlation matrix: P(0) = delta^(-1) * I
+    P = [[0.0] * order for _ in range(order)]
+    for i in range(order):
+        P[i][i] = 1.0 / delta
+
+    out: List[float] = []
+    for n in range(len(target)):
+        # Input vector with zero-padding
+        x = [noise[n - k] if n - k >= 0 else 0.0 
+             for k in range(order)]
+        
+        # Compute P * x
+        Px = [sum(P[i][j] * x[j] for j in range(order)) 
+              for i in range(order)]
+        
+        # Compute x^T * P * x
+        xPx = sum(x[i] * Px[i] for i in range(order))
+        denom = lam + xPx
+        
+        # Kalman gain: k = (P * x) / (lambda + x^T * P * x)
+        k = [Px[i] / denom for i in range(order)]
+
+        # Filter output
+        y = sum(w[i] * x[i] for i in range(order))
+        
+        # Error signal
+        e = target[n] - y
+        
+        # Weight update: w(n) = w(n-1) + k(n) * e(n)
+        for i in range(order):
+            w[i] += k[i] * e
+
+        # Update inverse correlation matrix
+        # P(n) = (P(n-1) - k(n) * x^T(n) * P(n-1)) / lambda
+        xTP = [sum(x[j] * P[j][i] for j in range(order)) 
+               for i in range(order)]
+        for i in range(order):
+            for j in range(order):
+                P[i][j] = (P[i][j] - k[i] * xTP[j]) / lam
+
         out.append(e)
     return out
 \end{lstlisting}
 
+The RLS algorithm's complexity is $O(M^2)$ per sample due to:
+\begin{itemize}
+    \item Matrix-vector multiplication: $\mathbf{P}(n-1)\mathbf{x}(n)$
+    \item Outer product computation: $\mathbf{k}(n)\mathbf{x}^T(n)\mathbf{P}(n-1)$
+    \item Matrix update operations
+\end{itemize}
+
+The initialization parameter $\delta$ controls the initial condition of the inverse correlation matrix. Smaller values make the filter more responsive initially but may cause numerical instability.
+
 \subsection{Padasip Implementation}
 
-An alternative implementation using the padasip library was also developed for comparison. Padasip provides optimized implementations of adaptive filters with additional features:
+An alternative implementation using the padasip library was developed for comparison. Padasip is a Python library for adaptive signal processing that provides optimized implementations:
 
 \begin{itemize}
-    \item Optimized C-based core operations
-    \item Additional adaptive filter variants
-    \item Built-in preprocessing utilities
+    \item \textbf{Optimized C-based core}: Faster execution for large signals
+    \item \textbf{Additional filter variants}: NLMS, AP, and other adaptive algorithms
+    \item \textbf{Built-in utilities}: Preprocessing and input history generation
+    \item \textbf{Well-tested}: Mature library with extensive testing
 \end{itemize}
+
+\subsubsection{Padasip LMS Implementation}
+
+The padasip implementation uses the library's FilterLMS class:
+
+\begin{lstlisting}[caption=Padasip LMS Implementation]
+import padasip as pa
+
+def lms_padasip(noisy, noise, order=32, mu=0.01):
+    """LMS filter using padasip library."""
+    # Create input history matrix from noise reference
+    X = pa.preprocess.input_from_history(noise, order)
+    
+    # Initialize LMS filter
+    f = pa.filters.FilterLMS(n=order, mu=mu, w="random")
+    
+    # Process signal
+    y, e, w = f.run(noisy, X)
+    
+    return e  # Return error signal (cleaned output)
+\end{lstlisting}
+
+Key differences from custom implementation:
+\begin{itemize}
+    \item Input history is pre-computed as a matrix (more memory, faster processing)
+    \item Weight initialization can be random, zero, or custom
+    \item Returns filter output, error, and final weights
+\end{itemize}
+
+\subsubsection{Padasip RLS Implementation}
+
+The padasip RLS implementation uses FilterRLS:
+
+\begin{lstlisting}[caption=Padasip RLS Implementation]
+def rls_padasip(noisy, noise, order=16, lam=0.995, delta=0.01):
+    """RLS filter using padasip library."""
+    # Create input history matrix
+    X = pa.preprocess.input_from_history(noise, order)
+    
+    # Initialize RLS filter
+    # Note: padasip uses 'mu' parameter mapped from lambda
+    f = pa.filters.FilterRLS(n=order, mu=lam, eps=delta, w="random")
+    
+    # Process signal
+    y, e, w = f.run(noisy, X)
+    
+    return e  # Return error signal
+\end{lstlisting}
+
+Note: The padasip library uses parameter naming that differs slightly from standard RLS notation. The \texttt{mu} parameter corresponds to the forgetting factor $\lambda$, and \texttt{eps} corresponds to the initialization parameter $\delta$.
 
 \subsection{Preprocessing}
 
-Both implementations apply preprocessing to improve filter convergence:
+Both implementations apply preprocessing to improve filter convergence. The preprocessing pipeline consists of two stages applied sequentially:
 
 \begin{enumerate}
     \item \textbf{DC Removal}: Subtracts the mean to remove DC offset
@@ -230,11 +487,44 @@ Both implementations apply preprocessing to improve filter convergence:
     x_{\text{dc}}(n) = x(n) - \frac{1}{N}\sum_{i=0}^{N-1} x(i)
     \end{equation}
     
+    The DC component can cause the adaptive filter to converge to a biased solution. Removing it ensures the signal is centered around zero, which is optimal for adaptive filtering.
+    
+    \begin{lstlisting}[caption=DC Removal Implementation]
+def remove_dc(signal: List[float]) -> List[float]:
+    """Remove DC component by subtracting mean."""
+    if not signal:
+        return signal
+    mean = sum(signal) / len(signal)
+    return [s - mean for s in signal]
+    \end{lstlisting}
+    
     \item \textbf{Normalization}: Scales the signal to prevent clipping
     \begin{equation}
-    x_{\text{norm}}(n) = \frac{x(n)}{\max(|x(n)|)}
+    x_{\text{norm}}(n) = \frac{x(n)}{\max(|x(n)|)} \cdot \alpha
     \end{equation}
+    
+    where $\alpha = 0.99$ is used as a safety margin to prevent clipping at exactly $\pm 1.0$. This ensures all samples remain within the valid range $[-1, 1]$ for floating-point processing and prevents overflow when converting back to integer format.
+    
+    \begin{lstlisting}[caption=Normalization Implementation]
+def normalize(signal: List[float], peak_target: float = 0.99) -> List[float]:
+    """Scale to a target peak magnitude."""
+    if not signal:
+        return signal
+    peak = max(abs(s) for s in signal)
+    if peak == 0:
+        return signal  # Avoid division by zero
+    scale = peak_target / peak
+    return [s * scale for s in signal]
+    \end{lstlisting}
 \end{enumerate}
+
+The preprocessing is applied to both the noisy signal and the noise reference before filtering. This ensures:
+\begin{itemize}
+    \item Both signals have zero mean, improving filter convergence
+    \item Both signals are scaled to similar amplitude ranges
+    \item Numerical stability during filter operations
+    \item Prevention of clipping artifacts in the output
+\end{itemize}
 
 \section{Experimental Setup}
 
@@ -249,35 +539,174 @@ The experiments were conducted using audio files:
 
 \subsection{Parameter Selection}
 
-A grid search was performed to find optimal parameters:
+A comprehensive grid search was performed to find optimal parameters. The grid search evaluates all parameter combinations and selects the configuration that minimizes the output RMS, which serves as a proxy for noise reduction effectiveness.
+
+\subsubsection{Grid Search Implementation}
+
+The grid search function systematically tests all parameter combinations:
+
+\begin{lstlisting}[caption=Grid Search Implementation]
+def grid_test(noisy: List[float], noise: List[float],
+              lms_grid: Iterable[Tuple[int, float]],
+              rls_grid: Iterable[Tuple[int, float, float]]):
+    """Return best LMS and RLS parameter sets by RMS of output."""
+    best_lms = (None, float("inf"))
+    best_rls = (None, float("inf"))
+
+    # Test all LMS parameter combinations
+    for order, mu in lms_grid:
+        out = lms_filter(noise, noisy, order=order, mu=mu)
+        val = rms(out)  # Evaluate performance
+        if val < best_lms[1]:  # Lower RMS is better
+            best_lms = ((order, mu), val)
+
+    # Test all RLS parameter combinations
+    for order, lam, delta in rls_grid:
+        out = rls_filter(noise, noisy, order=order, 
+                        lam=lam, delta=delta)
+        val = rms(out)
+        if val < best_rls[1]:
+            best_rls = ((order, lam, delta), val)
+
+    return best_lms[0], best_lms[1], best_rls[0], best_rls[1]
+\end{lstlisting}
 
 \subsubsection{LMS Grid Search}
+
+The LMS grid search explores combinations of filter order and step size:
+
 \begin{itemize}
-    \item Filter orders: 16, 24, 32, 48
-    \item Step sizes: 0.0035, 0.004, 0.005, 0.006, 0.010
+    \item \textbf{Filter orders}: 16, 24, 32, 48
+    \begin{itemize}
+        \item Lower orders (16-24): Faster computation, may underfit complex noise patterns
+        \item Higher orders (32-48): Better noise modeling, increased computational cost
+    \end{itemize}
+    \item \textbf{Step sizes}: 0.0035, 0.004, 0.005, 0.006, 0.010
+    \begin{itemize}
+        \item Smaller $\mu$ (0.0035-0.005): Slower convergence, better steady-state performance
+        \item Larger $\mu$ (0.006-0.010): Faster convergence, risk of instability
+    \end{itemize}
 \end{itemize}
 
+Total combinations tested: $4 \times 5 = 20$ parameter sets.
+
 \subsubsection{RLS Grid Search}
+
+The RLS grid search explores three-dimensional parameter space:
+
 \begin{itemize}
-    \item Filter orders: 8, 12, 16, 24
-    \item Forgetting factors: 0.990, 0.992, 0.995
-    \item Initialization deltas: 0.005, 0.01, 0.020
+    \item \textbf{Filter orders}: 8, 12, 16, 24
+    \begin{itemize}
+        \item Lower orders (8-12): Lower computational complexity ($O(M^2)$)
+        \item Higher orders (16-24): Better performance, significantly higher cost
+    \end{itemize}
+    \item \textbf{Forgetting factors}: 0.990, 0.992, 0.995
+    \begin{itemize}
+        \item Lower $\lambda$ (0.990): Better tracking of non-stationary noise
+        \item Higher $\lambda$ (0.995): Better steady-state performance, slower adaptation
+    \end{itemize}
+    \item \textbf{Initialization deltas}: 0.005, 0.01, 0.020
+    \begin{itemize}
+        \item Smaller $\delta$: More aggressive initial adaptation
+        \item Larger $\delta$: More conservative, numerically stable
+    \end{itemize}
 \end{itemize}
+
+Total combinations tested: $4 \times 3 \times 3 = 36$ parameter sets.
+
+The grid search methodology:
+\begin{enumerate}
+    \item For each parameter combination, run the adaptive filter
+    \item Compute the RMS of the output signal
+    \item Select the combination with minimum RMS
+    \item Use the selected parameters for final processing
+\end{enumerate}
+
+This exhaustive search ensures optimal parameter selection for the given test signals, though it requires significant computational time.
 
 \subsection{Performance Metrics}
 
-Performance was evaluated using:
+Performance was evaluated using multiple metrics to assess both overall performance and convergence behavior:
+
 \begin{itemize}
     \item \textbf{RMS (Root Mean Square)}: Overall signal energy measure
     \begin{equation}
     \text{RMS} = \sqrt{\frac{1}{N}\sum_{n=0}^{N-1} e^2(n)}
     \end{equation}
     
-    \item \textbf{Running RMS}: Time-varying RMS computed over a sliding window (50 ms) to track convergence
+    The RMS provides a single scalar measure of the output signal energy. Lower RMS values indicate better noise cancellation, assuming the desired signal energy remains constant.
+    
+    \begin{lstlisting}[caption=RMS Calculation]
+def rms(signal: List[float]) -> float:
+    """Root-mean-square level."""
+    if not signal:
+        return 0.0
+    return math.sqrt(sum(s * s for s in signal) / len(signal))
+    \end{lstlisting}
+    
+    \item \textbf{Running RMS}: Time-varying RMS computed over a sliding window to track convergence
     \begin{equation}
-    \text{RMS}_{\text{run}}(n) = \sqrt{\frac{1}{W}\sum_{i=n-W+1}^{n} e^2(i)}
+    \text{RMS}_{\text{run}}(n) = \sqrt{\frac{1}{W}\sum_{i=\max(0,n-W+1)}^{n} e^2(i)}
     \end{equation}
-    where $W$ is the window size in samples.
+    where $W$ is the window size in samples, typically corresponding to 50 ms of audio.
+    
+    The running RMS reveals how the filter performance evolves over time, showing:
+    \begin{itemize}
+        \item Initial convergence speed
+        \item Steady-state performance
+        \item Adaptation to signal changes
+    \end{itemize}
+    
+    \begin{lstlisting}[caption=Running RMS Implementation]
+def running_rms(signal: List[float], window: int) -> List[float]:
+    """Compute running RMS over a sliding window."""
+    if not signal or window < 1:
+        return []
+    
+    # Precompute cumulative sum of squares for efficiency
+    cumsum = [0.0]
+    for s in signal:
+        cumsum.append(cumsum[-1] + s * s)
+    
+    out = []
+    for i in range(len(signal)):
+        start = max(0, i - window + 1)
+        if start == 0:
+            total_window = cumsum[i + 1]
+            count = i + 1
+        else:
+            total_window = cumsum[i + 1] - cumsum[start]
+            count = window
+        out.append(math.sqrt(total_window / count))
+    return out
+    \end{lstlisting}
+    
+    The implementation uses cumulative sums for computational efficiency, reducing the complexity from $O(N \cdot W)$ to $O(N)$.
+\end{itemize}
+
+\subsection{Convergence Analysis}
+
+Convergence analysis tracks how the adaptive filters adapt over time. The running RMS is computed with a 50 ms window (configurable via \texttt{--conv-window-ms}) and saved to CSV for further analysis:
+
+\begin{lstlisting}[caption=Convergence Data Export]
+# Convergence curves (running RMS)
+window = max(1, int(rate_noisy * (args.conv_window_ms / 1000.0)))
+lms_curve = running_rms(lms_clean, window)
+rls_curve = running_rms(rls_clean, window)
+
+# Export to CSV
+with conv_csv.open("w", encoding="utf-8") as f:
+    f.write("time_sec,lms_running_rms,rls_running_rms\n")
+    for t, a, b in zip(times, lms_curve, rls_curve):
+        f.write(f"{t},{a},{b}\n")
+\end{lstlisting}
+
+The convergence data enables:
+\begin{itemize}
+    \item Quantitative comparison of convergence rates
+    \item Identification of convergence time (time to reach steady-state)
+    \item Analysis of filter stability
+    \item Performance optimization through parameter tuning
 \end{itemize}
 
 \section{Results}
@@ -453,31 +882,141 @@ ANC/
 └── adaptive_noise_cancellation_padasip.py
 \end{verbatim}
 
-\subsection{Usage Examples}
+\subsection{Command-Line Interface}
+
+Both implementations provide comprehensive command-line interfaces for flexible usage.
 
 \subsubsection{Custom Implementation}
-\begin{verbatim}
-# Run with default parameters
+
+The custom implementation supports the following command-line arguments:
+
+\begin{lstlisting}[caption=Command-Line Arguments for Custom Implementation]
+--noisy PATH          Path to noisy speech (default: aud/audio.wav)
+--noise PATH          Path to noise reference (default: aud/audio_noise.wav)
+--lms-order INT      LMS filter order (default: 12)
+--lms-mu FLOAT        LMS step size (default: 0.0025)
+--rls-order INT      RLS filter order (default: 8)
+--rls-lam FLOAT      RLS forgetting factor (default: 0.995)
+--rls-delta FLOAT     RLS initialization delta (default: 0.01)
+--grid                Enable grid search for optimal parameters
+--skip-plot           Disable plot generation
+--conv-window-ms FLOAT Running RMS window size in ms (default: 50.0)
+\end{lstlisting}
+
+Usage examples:
+
+\begin{lstlisting}[caption=Basic Usage]
+# Run with default parameters (uses aud/audio.wav and aud/audio_noise.wav)
 python adaptive_noise_cancellation.py
 
-# Run with grid search
+# Process different audio files
+python adaptive_noise_cancellation.py \
+    --noisy aud/audio2.wav \
+    --noise aud/audio2_noise.wav
+
+# Run with grid search to find optimal parameters
 python adaptive_noise_cancellation.py --grid
 
-# Specify custom parameters
+# Specify custom parameters manually
 python adaptive_noise_cancellation.py \
     --lms-order 32 --lms-mu 0.01 \
     --rls-order 16 --rls-lam 0.995 --rls-delta 0.01
-\end{verbatim}
+
+# Skip plot generation (faster execution)
+python adaptive_noise_cancellation.py --grid --skip-plot
+
+# Custom convergence window size
+python adaptive_noise_cancellation.py --conv-window-ms 100.0
+\end{lstlisting}
 
 \subsubsection{Padasip Implementation}
-\begin{verbatim}
+
+The padasip implementation provides similar functionality with additional options:
+
+\begin{lstlisting}[caption=Command-Line Arguments for Padasip Implementation]
+--noisy PATH          Path to noisy speech (default: aud/audio.wav)
+--noise PATH          Path to noise reference (default: aud/audio_noise.wav)
+--algo {lms,rls,both} Algorithm to run (default: both)
+--lms-order INT       LMS filter order (default: 32)
+--lms-mu FLOAT        LMS step size (default: 0.01)
+--rls-order INT       RLS filter order (default: 16)
+--rls-lam FLOAT       RLS forgetting factor (default: 0.995)
+--rls-delta FLOAT     RLS initialization delta (default: 0.01)
+--skip-plot           Disable plot generation
+--conv-window-ms FLOAT Running RMS window size in ms (default: 50.0)
+\end{lstlisting}
+
+Usage examples:
+
+\begin{lstlisting}[caption=Padasip Usage Examples]
 # Run both algorithms
 python adaptive_noise_cancellation_padasip.py --algo both
 
-# Run only LMS
+# Run only LMS filter
 python adaptive_noise_cancellation_padasip.py --algo lms \
     --lms-order 32 --lms-mu 0.01
-\end{verbatim}
+
+# Run only RLS filter
+python adaptive_noise_cancellation_padasip.py --algo rls \
+    --rls-order 16 --rls-lam 0.995 --rls-delta 0.01
+
+# Process different files without plots
+python adaptive_noise_cancellation_padasip.py \
+    --noisy aud/audio2.wav \
+    --noise aud/audio2_noise.wav \
+    --skip-plot
+\end{lstlisting}
+
+\subsection{Main Processing Pipeline}
+
+The main processing pipeline for both implementations follows these steps:
+
+\begin{enumerate}
+    \item \textbf{File Loading}: Read WAV files and extract audio samples
+    \begin{lstlisting}[caption=File Loading]
+rate_noisy, noisy = read_wav(noisy_path)
+rate_noise, noise = read_wav(noise_path)
+# Ensure sample rates match
+if rate_noisy != rate_noise:
+    raise ValueError("Sample rates must match")
+    \end{lstlisting}
+    
+    \item \textbf{Signal Alignment}: Trim to common length
+    \begin{lstlisting}[caption=Signal Alignment]
+length = min(len(noisy), len(noise))
+noisy = noisy[:length]
+noise = noise[:length]
+    \end{lstlisting}
+    
+    \item \textbf{Preprocessing}: Remove DC and normalize
+    \begin{lstlisting}[caption=Preprocessing]
+noisy = normalize(remove_dc(noisy))
+noise = normalize(remove_dc(noise))
+    \end{lstlisting}
+    
+    \item \textbf{Grid Search} (optional): Find optimal parameters
+    \begin{lstlisting}[caption=Grid Search]
+if args.grid:
+    best_lms, best_lms_rms, best_rls, best_rls_rms = grid_test(...)
+    args.lms_order, args.lms_mu = best_lms
+    args.rls_order, args.rls_lam, args.rls_delta = best_rls
+    \end{lstlisting}
+    
+    \item \textbf{Filtering}: Apply adaptive filters
+    \begin{lstlisting}[caption=Filtering]
+lms_clean = lms_filter(noise, noisy, order=args.lms_order, mu=args.lms_mu)
+rls_clean = rls_filter(noise, noisy, order=args.rls_order, 
+                       lam=args.rls_lam, delta=args.rls_delta)
+    \end{lstlisting}
+    
+    \item \textbf{Output Generation}: Save results and generate plots
+    \begin{lstlisting}[caption=Output Generation]
+write_wav(out_dir / "audio_lms.wav", rate_noisy, lms_clean)
+write_wav(out_dir / "audio_rls.wav", rate_noisy, rls_clean)
+plot_signals(rate_noisy, noisy, lms_clean, rls_clean)
+plot_convergence(rate_noisy, lms_curve, rls_curve)
+    \end{lstlisting}
+\end{enumerate}
 
 \subsection{Key Parameters}
 

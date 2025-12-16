@@ -22,7 +22,19 @@ import math
 import struct
 import wave
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Tuple, Optional
+
+try:
+    from convergence_diagnostics import (
+        check_stability,
+        recommend_lms_params,
+        recommend_rls_params,
+        print_diagnostics,
+        plot_enhanced_convergence,
+    )
+    HAS_DIAGNOSTICS = True
+except ImportError:
+    HAS_DIAGNOSTICS = False
 
 
 def read_wav(path: Path) -> Tuple[int, List[float]]:
@@ -74,8 +86,46 @@ def lms_filter(
         x = [noise[n - k] if n - k >= 0 else 0.0 for k in range(order)]
         y = sum(w[i] * x[i] for i in range(order))
         e = target[n] - y
+        # Stability check
+        if math.isnan(e) or math.isinf(e):
+            print(f"WARNING: LMS instability detected at sample {n}")
+            return out  # Return partial result
         for i in range(order):
             w[i] += 2 * mu * e * x[i]
+        out.append(e)
+    return out
+
+
+def nlms_filter(
+    noise: List[float], target: List[float], order: int = 12, mu: float = 0.5, eps: float = 1e-6
+) -> List[float]:
+    """Normalized LMS adaptive filter with automatic step-size normalization.
+    
+    NLMS is more robust than LMS as it normalizes the step size by input power,
+    preventing divergence when input power varies.
+    
+    Args:
+        noise: Noise reference signal
+        target: Noisy target signal
+        order: Filter order (number of taps)
+        mu: Normalized step size (typically 0.1 to 1.0)
+        eps: Small constant to prevent division by zero
+    """
+    w = [0.0] * order
+    out: List[float] = []
+    for n in range(len(target)):
+        x = [noise[n - k] if n - k >= 0 else 0.0 for k in range(order)]
+        y = sum(w[i] * x[i] for i in range(order))
+        e = target[n] - y
+        # Stability check
+        if math.isnan(e) or math.isinf(e):
+            print(f"WARNING: NLMS instability detected at sample {n}")
+            return out
+        # Normalized update: step size divided by input power
+        x_power = sum(xi * xi for xi in x) + eps
+        alpha = mu / x_power
+        for i in range(order):
+            w[i] += 2 * alpha * e * x[i]
         out.append(e)
     return out
 
@@ -101,10 +151,18 @@ def rls_filter(
         Px = [sum(P[i][j] * x[j] for j in range(order)) for i in range(order)]
         xPx = sum(x[i] * Px[i] for i in range(order))
         denom = lam + xPx
+        # Stability check for RLS
+        if abs(denom) < 1e-10:
+            print(f"WARNING: RLS numerical instability at sample {n} (denom={denom})")
+            return out
         k = [Px[i] / denom for i in range(order)]
 
         y = sum(w[i] * x[i] for i in range(order))
         e = target[n] - y
+        # Stability check
+        if math.isnan(e) or math.isinf(e):
+            print(f"WARNING: RLS instability detected at sample {n}")
+            return out
         for i in range(order):
             w[i] += k[i] * e
 
@@ -268,9 +326,9 @@ def main() -> None:
     parser.add_argument("--noise", default="aud/audio_noise.wav", help="Path to noise ref")
     parser.add_argument("--lms-order", type=int, default=12)
     parser.add_argument("--lms-mu", type=float, default=0.0025)
-    parser.add_argument("--rls-order", type=int, default=10)
+    parser.add_argument("--rls-order", type=int, default=15)
     parser.add_argument("--rls-lam", type=float, default=0.999)
-    parser.add_argument("--rls-delta", type=float, default=0.1)
+    parser.add_argument("--rls-delta", type=float, default=0.06)
     parser.add_argument("--skip-plot", action="store_true", help="Disable plot output")
     parser.add_argument(
         "--grid",
@@ -282,6 +340,21 @@ def main() -> None:
         type=float,
         default=50.0,
         help="Running RMS window (ms) for convergence curves",
+    )
+    parser.add_argument(
+        "--use-nlms",
+        action="store_true",
+        help="Use Normalized LMS instead of standard LMS (more stable)",
+    )
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Show parameter diagnostics and recommendations",
+    )
+    parser.add_argument(
+        "--use-recommended",
+        action="store_true",
+        help="Use recommended parameters based on signal analysis",
     )
     args = parser.parse_args()
 
@@ -303,6 +376,24 @@ def main() -> None:
     # Preprocess to improve convergence.
     noisy = normalize(remove_dc(noisy))
     noise = normalize(remove_dc(noise))
+
+    # Show diagnostics if requested or available
+    if HAS_DIAGNOSTICS and (args.diagnostics or args.use_recommended):
+        print_diagnostics(
+            noisy, noise,
+            (args.lms_order, args.lms_mu),
+            (args.rls_order, args.rls_lam, args.rls_delta)
+        )
+    
+    # Use recommended parameters if requested
+    if args.use_recommended and HAS_DIAGNOSTICS:
+        rec_lms = recommend_lms_params(noise, noisy, args.lms_order)
+        rec_rls = recommend_rls_params(noise, noisy, args.rls_order)
+        args.lms_order, args.lms_mu = rec_lms
+        args.rls_order, args.rls_lam, args.rls_delta = rec_rls
+        print(f"\nUsing recommended parameters:")
+        print(f"  LMS: order={args.lms_order}, μ={args.lms_mu:.6f}")
+        print(f"  RLS: order={args.rls_order}, λ={args.rls_lam:.6f}, δ={args.rls_delta:.6f}\n")
 
     if args.grid:
         lms_grid = [
@@ -334,15 +425,23 @@ def main() -> None:
         args.lms_order, args.lms_mu = best_lms
         args.rls_order, args.rls_lam, args.rls_delta = best_rls
 
-    lms_clean, rls_clean = run_once(
-        noisy=noisy,
-        noise=noise,
-        lms_order=args.lms_order,
-        lms_mu=args.lms_mu,
-        rls_order=args.rls_order,
-        rls_lam=args.rls_lam,
-        rls_delta=args.rls_delta,
-    )
+    # Run filters
+    if args.use_nlms:
+        print("Using Normalized LMS (NLMS) filter...")
+        lms_clean = nlms_filter(noise, noisy, order=args.lms_order, mu=args.lms_mu)
+    else:
+        lms_clean = lms_filter(noise, noisy, order=args.lms_order, mu=args.lms_mu)
+    
+    rls_clean = rls_filter(noise, noisy, order=args.rls_order, lam=args.rls_lam, delta=args.rls_delta)
+    
+    # Check stability
+    if HAS_DIAGNOSTICS:
+        lms_stable, lms_msg = check_stability(lms_clean)
+        rls_stable, rls_msg = check_stability(rls_clean)
+        if not lms_stable:
+            print(f"⚠️  LMS STABILITY ISSUE: {lms_msg}")
+        if not rls_stable:
+            print(f"⚠️  RLS STABILITY ISSUE: {rls_msg}")
 
     write_wav(out_dir / "audio_lms.wav", rate_noisy, lms_clean)
     write_wav(out_dir / "audio_rls.wav", rate_noisy, rls_clean)
@@ -363,6 +462,15 @@ def main() -> None:
     if not args.skip_plot:
         plot_signals(rate_noisy, noisy, lms_clean, rls_clean)
         plot_convergence(rate_noisy, lms_curve, rls_curve)
+        
+        # Generate enhanced plot if diagnostics available
+        if HAS_DIAGNOSTICS:
+            plot_enhanced_convergence(
+                rate_noisy, lms_curve, rls_curve,
+                output_path="outputs_basic/convergence_enhanced.png",
+                lms_params=(args.lms_order, args.lms_mu),
+                rls_params=(args.rls_order, args.rls_lam, args.rls_delta)
+            )
 
     print(f"Input RMS: {rms(noisy):.4f}")
     print(

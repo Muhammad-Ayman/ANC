@@ -91,7 +91,7 @@ def lms_filter(
             print(f"WARNING: LMS instability detected at sample {n}")
             return out  # Return partial result
         for i in range(order):
-            w[i] += 2 * mu * e * x[i]
+            w[i] +=  mu * e * x[i]
         out.append(e)
     return out
 
@@ -325,9 +325,9 @@ def main() -> None:
     parser.add_argument("--noisy", default="aud/audio.wav", help="Path to noisy speech")
     parser.add_argument("--noise", default="aud/audio_noise.wav", help="Path to noise ref")
     parser.add_argument("--lms-order", type=int, default=12)
-    parser.add_argument("--lms-mu", type=float, default=0.0025)
+    parser.add_argument("--lms-mu", type=float, default=0.025)
     parser.add_argument("--rls-order", type=int, default=15)
-    parser.add_argument("--rls-lam", type=float, default=0.999)
+    parser.add_argument("--rls-lam", type=float, default=0.949)
     parser.add_argument("--rls-delta", type=float, default=0.06)
     parser.add_argument("--skip-plot", action="store_true", help="Disable plot output")
     parser.add_argument(

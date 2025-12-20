@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adaptive Noise Cancellation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="background-gradient"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1 class="title">
+                    <span class="icon">🎧</span>
+                    Adaptive Noise Cancellation
+                </h1>
+                <p class="subtitle">Process audio with LMS, NLMS, and RLS adaptive filters</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+
+            <!-- Upload Section -->
+            <section class="card upload-section">
+                <h2 class="section-title">📁 Audio Input</h2>
+
+                <div class="input-tabs">
+                    <button class="tab-btn active" data-tab="upload">Upload Files</button>
+                    <button class="tab-btn" data-tab="test">Test Samples</button>
+                </div>
+
+                <!-- Upload Tab -->
+                <div class="tab-content active" id="upload-tab">
+                    <div class="upload-grid">
+                        <div class="upload-box" id="noisy-upload">
+                            <div class="upload-icon">🎤</div>
+                            <h3>Noisy Audio</h3>
+                            <p>Drag & drop or click to upload</p>
+                            <input type="file" id="noisy-file" accept=".wav" hidden>
+                            <div class="file-info" id="noisy-info"></div>
+                        </div>
+
+                        <div class="upload-box" id="noise-upload">
+                            <div class="upload-icon">🔊</div>
+                            <h3>Noise Reference</h3>
+                            <p>Drag & drop or click to upload</p>
+                            <input type="file" id="noise-file" accept=".wav" hidden>
+                            <div class="file-info" id="noise-info"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Test Samples Tab -->
+                <div class="tab-content" id="test-tab">
+                    <div class="test-samples">
+                        <div class="sample-selector">
+                            <label for="test-select">Select Test Sample:</label>
+                            <select id="test-select">
+                                <option value="">-- Choose a test sample --</option>
+                            </select>
+                            <button class="btn btn-secondary" id="load-test-btn" disabled>Load Sample</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Audio Preview Section -->
+            <section class="card preview-section" id="preview-section" style="display: none;">
+                <h2 class="section-title">🎵 Audio Preview</h2>
+
+                <div class="audio-grid">
+                    <div class="audio-player-card">
+                        <h3>Noisy Audio</h3>
+                        <audio controls id="noisy-player">
+                            <source id="noisy-source" type="audio/wav">
+                        </audio>
+                        <canvas id="noisy-canvas" class="waveform-canvas"></canvas>
+                    </div>
+
+                    <div class="audio-player-card">
+                        <h3>Noise Reference</h3>
+                        <audio controls id="noise-player">
+                            <source id="noise-source" type="audio/wav">
+                        </audio>
+                        <canvas id="noise-canvas" class="waveform-canvas"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Algorithm Selection -->
+            <section class="card algorithm-section" id="algorithm-section" style="display: none;">
+                <h2 class="section-title">⚙️ Algorithm Configuration</h2>
+
+                <div class="algorithm-selector">
+                    <div class="algo-option" data-algo="lms">
+                        <input type="radio" name="algorithm" id="algo-lms" value="lms" checked>
+                        <label for="algo-lms">
+                            <div class="algo-label">
+                                <span class="algo-name">LMS</span>
+                                <span class="algo-desc">Least Mean Squares</span>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="algo-option" data-algo="rls">
+                        <input type="radio" name="algorithm" id="algo-rls" value="rls">
+                        <label for="algo-rls">
+                            <div class="algo-label">
+                                <span class="algo-name">RLS</span>
+                                <span class="algo-desc">Recursive Least Squares</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Parameters -->
+                <div class="parameters">
+                    <!-- LMS Parameters -->
+                    <div class="param-group active" id="lms-params">
+                        <div class="param-item">
+                            <label for="lms-order">Filter Order:</label>
+                            <input type="number" id="lms-order" value="12" min="1" max="100">
+                            <span class="param-info">Number of filter taps (1-100)</span>
+                        </div>
+                        <div class="param-item">
+                            <label for="lms-mu">Step Size (μ):</label>
+                            <input type="number" id="lms-mu" value="0.025" min="0.001" max="1" step="0.001">
+                            <span class="param-info">Learning rate (0.001-1.0)</span>
+                        </div>
+                    </div>
+
+                    <!-- RLS Parameters -->
+                    <div class="param-group" id="rls-params">
+                        <div class="param-item">
+                            <label for="rls-order">Filter Order:</label>
+                            <input type="number" id="rls-order" value="15" min="1" max="100">
+                            <span class="param-info">Number of filter taps (1-100)</span>
+                        </div>
+                        <div class="param-item">
+                            <label for="rls-lambda">Forgetting Factor (λ):</label>
+                            <input type="number" id="rls-lambda" value="0.949" min="0.9" max="0.9999" step="0.001">
+                            <span class="param-info">Memory factor (0.9-0.9999)</span>
+                        </div>
+                        <div class="param-item">
+                            <label for="rls-delta">Delta (δ):</label>
+                            <input type="number" id="rls-delta" value="0.06" min="0.001" max="1" step="0.001">
+                            <span class="param-info">Initialization constant</span>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary btn-process" id="process-btn">
+                    <span class="btn-icon">▶</span>
+                    Process Audio
+                </button>
+            </section>
+
+            <!-- Processing Status -->
+            <div class="processing-overlay" id="processing-overlay" style="display: none;">
+                <div class="processing-modal">
+                    <div class="spinner"></div>
+                    <h3>Processing Audio...</h3>
+                    <p id="processing-status">Applying adaptive filter...</p>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <section class="card results-section" id="results-section" style="display: none;">
+                <h2 class="section-title">✨ Results</h2>
+
+                <div class="results-grid">
+                    <!-- Output Audio -->
+                    <div class="result-card">
+                        <h3>Cleaned Audio Output</h3>
+                        <audio controls id="output-player">
+                            <source id="output-source" type="audio/wav">
+                        </audio>
+                        <canvas id="output-canvas" class="waveform-canvas"></canvas>
+                        <button class="btn btn-secondary btn-download" id="download-btn">
+                            <span>⬇</span> Download
+                        </button>
+                    </div>
+
+                    <!-- Metrics -->
+                    <div class="result-card metrics-card">
+                        <h3>Performance Metrics</h3>
+                        <div class="metrics">
+                            <div class="metric-item">
+                                <span class="metric-label">Algorithm:</span>
+                                <span class="metric-value" id="metric-algo">-</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Input RMS:</span>
+                                <span class="metric-value" id="metric-input-rms">-</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Output RMS:</span>
+                                <span class="metric-value" id="metric-output-rms">-</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="metric-label">Noise Reduction:</span>
+                                <span class="metric-value highlight" id="metric-reduction">-</span>
+                            </div>
+                        </div>
+                        <div class="params-used" id="params-used"></div>
+                    </div>
+                </div>
+
+                <!-- Convergence Plot -->
+                <div class="convergence-plot">
+                    <h3>Convergence Analysis</h3>
+                    <canvas id="convergence-canvas"></canvas>
+                </div>
+
+                <!-- Comparison View -->
+                <div class="comparison-view">
+                    <h3>Before vs After Comparison</h3>
+                    <canvas id="comparison-canvas" class="waveform-canvas large"></canvas>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Adaptive Noise Cancellation · LMS | NLMS | RLS Filters</p>
+        </footer>
+    </div>
+
+    <script src="js/visualizer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
